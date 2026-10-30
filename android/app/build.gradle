@@ -1,0 +1,59 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.aosgoxel'
+    compileSdk 34
+    ndkVersion '27.0.12077973'
+
+    defaultConfig {
+        applicationId 'com.aosgoxel'
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName '0.13.0-aos'
+
+        externalNativeBuild {
+            cmake {
+                // C++ is used by the pathtracer (yocto), ImGui and QuickJS.
+                arguments '-DANDROID_STL=c++_shared'
+                // arm64 only by default: smaller APK, every phone since 2017
+                // is arm64.  Add 'armeabi-v7a' here if you need older devices.
+                abiFilters 'arm64-v8a'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('../../CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+
+    sourceSets {
+        main {
+            // Build the SDL Java glue (org.libsdl.app.SDLActivity) straight
+            // from the SDL sources, so we don't have to vendor it.
+            java.srcDirs += file('../../third_party/SDL/android-project/app/src/main/java')
+        }
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+        }
+        release {
+            minifyEnabled false
+            // Signed with the local debug key so that the APK can be
+            // installed directly.  Replace with your own key for a store
+            // release.
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    lint {
+        abortOnError false
+    }
+}

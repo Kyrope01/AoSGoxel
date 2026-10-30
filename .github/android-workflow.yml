@@ -1,0 +1,94 @@
+# NOTE: move this file to .github/workflows/android.yml to enable it.
+#
+# It is kept outside of .github/workflows/ because automated tools (including
+# the assistant that wrote it) are not allowed to create files in that folder.
+# Copying it in the GitHub web UI is enough: the workflow then shows up under
+# the "Actions" tab as "android".
+#
+name: android
+
+# Builds an installable Android APK of goxel (SDL2 + OpenGL ES 2.0 backend).
+#
+# The APK is uploaded as a workflow artifact.  When a tag is pushed, it is
+# also attached to the GitHub release.
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SDL_TAG: release-2.32.8
+  NDK_VERSION: 27.0.12077973
+  CMAKE_VERSION: 3.22.1
+  GRADLE_VERSION: '8.7'
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # only used for the tag/release upload
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # The Android SDK is preinstalled on the runner, but the exact NDK and
+      # CMake versions are pinned in android/app/build.gradle.
+      - name: Cache NDK and CMake
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/ndk/${{ env.NDK_VERSION }}
+            /usr/local/lib/android/sdk/cmake/${{ env.CMAKE_VERSION }}
+          key: android-tools-${{ env.NDK_VERSION }}-${{ env.CMAKE_VERSION }}
+
+      - name: Install NDK and CMake
+        run: |
+          set -e
+          ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager | head -n1)"
+          fi
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" --install "platforms;android-34" "build-tools;34.0.0" \
+            "ndk;${NDK_VERSION}" "cmake;${CMAKE_VERSION}"
+
+      - name: Fetch SDL2
+        run: ./android/fetch-sdl.sh
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Build APK
+        working-directory: android
+        run: gradle assembleDebug assembleRelease --no-daemon --stacktrace
+
+      - name: List APKs
+        run: find android/app/build/outputs/apk -name '*.apk' -exec ls -lh {} \;
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: aosgoxel-apk
+          path: android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+
+      - name: Attach APK to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: android/app/build/outputs/apk/**/*.apk
+          fail_on_unmatched_files: false

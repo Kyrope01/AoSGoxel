@@ -34,7 +34,11 @@
 sys_callbacks_t sys_callbacks = {};
 
 // Directly include the C file!
+// Mobile builds (GOXEL_NO_TINYFILEDIALOGS) don't have any of the desktop
+// dialog helpers, and use the file dialog functions at the end of this file.
+#ifndef GOXEL_NO_TINYFILEDIALOGS
 #include "../ext_src/tinyfiledialogs/tinyfiledialogs.c"
+#endif
 
 #if defined(__unix__) && !defined(__EMSCRIPTEN__) && !defined(ANDROID)
 #include <pwd.h>
@@ -261,6 +265,86 @@ static int filters_count(const char * const*filters)
     return nb;
 }
 
+#ifdef GOXEL_NO_TINYFILEDIALOGS
+
+/*
+ * Mobile builds: there is no native file picker, so files are exchanged
+ * through the user directory (on Android: Android/data/<package>/files/goxel,
+ * which is visible from a computer over USB).
+ *
+ * Saving/exporting writes into <user_dir>/exports/.  Opening asks the user to
+ * put the file in the user directory and to use "Recent files" instead, so the
+ * open dialogs simply return NULL (cancelled).
+ */
+static char g_dialog_path[1024];
+
+static const char *get_dialog_save_path(const char *name)
+{
+    const char *dir = sys_get_user_dir();
+    const char *base;
+    char buf[1024];
+
+    if (!dir || !*dir) return NULL;
+    if (!name || !*name) name = "untitled";
+    base = strrchr(name, '/');
+    base = base ? base + 1 : name;
+    snprintf(buf, sizeof(buf), "%s/exports", dir);
+    sys_make_dir(buf);
+    snprintf(g_dialog_path, sizeof(g_dialog_path), "%s/exports/%s", dir, base);
+    return g_dialog_path;
+}
+
+const char *sys_open_file_dialog(const char *title,
+                                 const char *default_path_and_file,
+                                 const char * const *filters,
+                                 const char *filters_desc)
+{
+    (void)title;
+    (void)default_path_and_file;
+    (void)filters;
+    (void)filters_desc;
+    LOG_I("No file picker in this build. Put the file in '%s' and open it "
+          "from the recent files menu.", sys_get_user_dir());
+    return NULL;
+}
+
+const char *sys_open_multi_file_dialog(const char *title,
+    const char *default_path_and_file,
+    const char * const *filters,
+    const char *filters_desc)
+{
+    return sys_open_file_dialog(title, default_path_and_file, filters,
+                                filters_desc);
+}
+
+const char *sys_open_folder_dialog(const char *title,
+                                   const char *default_path)
+{
+    (void)title;
+    (void)default_path;
+    return sys_get_user_dir();
+}
+
+const char *sys_save_file_dialog(const char *title,
+                                 const char *default_path_and_file,
+                                 const char * const *filters,
+                                 const char *filters_desc)
+{
+    (void)title;
+    (void)filters;
+    (void)filters_desc;
+    return get_dialog_save_path(default_path_and_file);
+}
+
+const char *sys_get_save_path(const char *default_name,
+                              const char * const *filters,
+                              const char *filters_desc)
+{
+    return sys_save_file_dialog("Save", default_name, filters, filters_desc);
+}
+
+#else // GOXEL_NO_TINYFILEDIALOGS
+
 const char *sys_open_file_dialog(const char *title,
                                  const char *default_path_and_file,
                                  const char * const *filters,
@@ -305,6 +389,8 @@ const char *sys_get_save_path(const char *default_name,
 {
     return sys_save_file_dialog("Save", default_name, filters, filters_desc);
 }
+
+#endif // GOXEL_NO_TINYFILEDIALOGS
 
 void sys_on_saved(const char *path)
 {

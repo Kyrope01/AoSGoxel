@@ -1,0 +1,5 @@
+// Top level build file.  Only the Android application plugin is needed: the
+// native part is built by CMake (see ../CMakeLists.txt) through AGP.
+plugins {
+    id 'com.android.application' version '8.5.2' apply false
+}

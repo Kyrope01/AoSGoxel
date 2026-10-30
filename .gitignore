@@ -21,3 +21,14 @@ goxel-aos.code-workspace
 goxel_info.exe
 /.cursor
 /tmp
+
+# Android build (see android/README.md)
+/third_party/
+/android/.gradle/
+/android/local.properties
+/android/build/
+/android/app/build/
+/android/app/.cxx/
+/android/.idea/
+*.apk
+*.aab

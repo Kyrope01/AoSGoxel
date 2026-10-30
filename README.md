@@ -33,6 +33,16 @@ https://github.com/GrandyB/goxel/releases/latest
 Releases are typically available as a Windows `.exe`, but other formats may be available through the [build pipeline](https://github.com/GrandyB/goxel/actions/workflows/ci.yml).
 
 
+Android
+-------
+
+An Android APK can be built from source with SDL2 + OpenGL ES 2.0; see
+[`android/README.md`](android/README.md) for the build steps, the touch
+controls and the current limitations. The workflow that builds the APK on
+GitHub Actions is in `.github/android-workflow.yml` (copy it to
+`.github/workflows/android.yml` to enable it).
+
+
 ![Lantern Ridge](.github/images/lantern_ridge_grandy.png)
 
 *Lantern Ridge*, made with this fork by Mark 'Grandy' Bishop.
