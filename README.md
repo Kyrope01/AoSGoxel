@@ -38,9 +38,8 @@ Android
 
 An Android APK can be built from source with SDL2 + OpenGL ES 2.0; see
 [`android/README.md`](android/README.md) for the build steps, the touch
-controls and the current limitations. The workflow that builds the APK on
-GitHub Actions is in `.github/android-workflow.yml` (copy it to
-`.github/workflows/android.yml` to enable it).
+controls and the current limitations. `.github/workflows/android.yml` builds
+the APK on GitHub Actions and uploads it as an artifact.
 
 
 ![Lantern Ridge](.github/images/lantern_ridge_grandy.png)

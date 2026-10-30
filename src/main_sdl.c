@@ -39,7 +39,6 @@
 #include <SDL.h>
 #include <SDL_system.h>
 
-#include <dirent.h>
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
@@ -72,8 +71,10 @@ static int          g_nb_fingers = 0;
 static float        g_pinch_dist = 0;
 static bool         g_two_active = false;
 static bool         g_release_frame = false;
+static bool         g_block_draw = false; // Lifting 2 fingers must not draw.
 
 static int          g_fb_size[2] = {1, 1};
+static float        g_win_to_fb[2] = {1.f, 1.f}; // fb size / window size.
 static float        g_ui_scale = 1.0f;  // Framebuffer pixels per UI point.
 
 static char         g_user_dir[PATH_BUF] = "";
@@ -123,8 +124,9 @@ static const char *get_user_dir(void *user)
 // Recently opened files.
 //
 // There is no native file picker in this build, so "File > Recent" is the way
-// to open models: we list the *.gox files found in the user directory, newest
-// first, and rewrite the list on startup.
+// to open models: it lists the *.gox files found in the user directory.  The
+// list is rebuilt at startup, keeping the previous order and appending the
+// models that were added to the directory since.
 // -------------------------------------------------------------------------
 
 typedef struct {
@@ -137,56 +139,105 @@ typedef struct {
     int         nb;
 } recent_list_t;
 
-static void recent_add(recent_list_t *list, const char *dir, const char *name)
+// Insert in the list, keeping it sorted by modification time (newest first).
+static void recent_add(recent_list_t *list, const char *path, time_t mtime)
 {
-    struct stat st;
-    char path[PATH_BUF];
     int i;
-    size_t len = strlen(name);
-
-    if (len < 5 || strcmp(name + len - 4, ".gox") != 0) return;
-    snprintf(path, sizeof(path), "%s/%s", dir, name);
-    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) return;
 
     if (list->nb == MAX_RECENT) {
         int oldest = 0;
         for (i = 1; i < MAX_RECENT; i++)
             if (list->items[i].mtime < list->items[oldest].mtime) oldest = i;
-        if (st.st_mtime <= list->items[oldest].mtime) return;
+        if (mtime <= list->items[oldest].mtime) return;
         memmove(&list->items[oldest], &list->items[oldest + 1],
                 sizeof(recent_t) * (MAX_RECENT - oldest - 1));
         list->nb--;
     }
 
     i = list->nb;
-    while (i > 0 && list->items[i - 1].mtime < st.st_mtime) {
+    while (i > 0 && list->items[i - 1].mtime < mtime) {
         list->items[i] = list->items[i - 1];
         i--;
     }
     snprintf(list->items[i].path, sizeof(list->items[i].path), "%s", path);
-    list->items[i].mtime = st.st_mtime;
+    list->items[i].mtime = mtime;
+    list->nb++;
+}
+
+static bool recent_contains(const recent_list_t *list, const char *path)
+{
+    int i;
+    for (i = 0; i < list->nb; i++)
+        if (strcmp(list->items[i].path, path) == 0) return true;
+    return false;
+}
+
+// Append at the end if the path is not already there.
+static void recent_append(recent_list_t *list, const char *path, time_t mtime)
+{
+    if (list->nb >= MAX_RECENT) return;
+    if (recent_contains(list, path)) return;
+    snprintf(list->items[list->nb].path, sizeof(list->items[list->nb].path),
+             "%s", path);
+    list->items[list->nb].mtime = mtime;
     list->nb++;
 }
 
 static int on_dir_entry(const char *dir, const char *name, void *user)
 {
-    recent_add(user, dir, name);
+    struct stat st;
+    char path[PATH_BUF];
+    size_t len = strlen(name);
+
+    if (len < 5 || strcmp(name + len - 4, ".gox") != 0) return 0;
+    snprintf(path, sizeof(path), "%s/%s", dir, name);
+    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) return 0;
+    recent_add(user, path, st.st_mtime);
     return 0;
 }
 
+/*
+ * Rewrite <user_dir>/recent-files.txt with the models present in the user
+ * directory, so that "File > Recent" works without a file picker.
+ *
+ * The order of the previous list is kept, since goxel puts the last opened
+ * file first (that is what goxel_open_most_recent_file() resumes).  Models
+ * that are not in the list yet are appended, newest first.
+ */
 static void seed_recent_files(void)
 {
-    recent_list_t list = {};
+    recent_list_t saved = {}, found = {}, list = {};
     const char *dir = sys_get_user_dir();
     FILE *file;
     char path[PATH_BUF];
+    char line[PATH_BUF];
     int i;
 
     if (!dir || !*dir) return;
-    sys_list_dir(dir, on_dir_entry, &list);
-    if (!list.nb) return;
 
     snprintf(path, sizeof(path), "%s/recent-files.txt", dir);
+    file = fopen(path, "r");
+    if (file) {
+        while (fgets(line, sizeof(line), file)) {
+            size_t len = strlen(line);
+            struct stat st;
+            while (len && (line[len - 1] == '\n' || line[len - 1] == '\r'))
+                line[--len] = '\0';
+            if (!len) continue;
+            if (stat(line, &st) != 0 || !S_ISREG(st.st_mode)) continue;
+            recent_append(&saved, line, st.st_mtime);
+        }
+        fclose(file);
+    }
+
+    sys_list_dir(dir, on_dir_entry, &found);
+
+    for (i = 0; i < saved.nb; i++)
+        recent_append(&list, saved.items[i].path, saved.items[i].mtime);
+    for (i = 0; i < found.nb; i++)
+        recent_append(&list, found.items[i].path, found.items[i].mtime);
+
+    if (!list.nb) return;
     file = fopen(path, "w");
     if (!file) return;
     for (i = 0; i < list.nb; i++)
@@ -197,6 +248,13 @@ static void seed_recent_files(void)
 // -------------------------------------------------------------------------
 // System callbacks.
 // -------------------------------------------------------------------------
+
+static void log_msg(void *user, const char *msg)
+{
+    (void)user;
+    // On Android this ends up in adb logcat, tagged "SDL/APP".
+    SDL_Log("%s", msg);
+}
 
 static void set_window_title(void *user, const char *title)
 {
@@ -302,10 +360,13 @@ static void add_finger(SDL_FingerID id, float x, float y)
 {
     if (find_finger(id) >= 0) return;
     if (g_nb_fingers >= MAX_FINGERS) return;
-    g_release_frame = true; // Let the core see a clean release first.
+    // Going from one finger to two closes the current stroke in the next
+    // frame, so that orbiting never leaves a tool stuck in "pressed" state.
+    if (g_nb_fingers > 0) g_release_frame = true;
     g_fingers[g_nb_fingers++] = (finger_t) {id, x, y};
     g_pinch_dist = 0;
     g_two_active = false;
+    if (g_nb_fingers >= 2) g_block_draw = true;
 }
 
 static void move_finger(SDL_FingerID id, float x, float y)
@@ -324,6 +385,7 @@ static void remove_finger(SDL_FingerID id)
     g_pinch_dist = 0;
     g_two_active = false;
     g_release_frame = true;
+    if (g_nb_fingers == 0) g_block_draw = false;
 }
 
 // Framebuffer position of a normalized (0..1) touch coordinate.
@@ -366,7 +428,9 @@ static void update_touches(inputs_t *inputs)
         p0[0] = g_fingers[0].x / g_ui_scale;
         p0[1] = g_fingers[0].y / g_ui_scale;
         vec2_copy(p0, inputs->touches[0].pos);
-        inputs->touches[0].down[0] = true;
+        // After an orbit/pan we wait for a full release before drawing again,
+        // otherwise lifting one of the two fingers paints where it landed.
+        if (!g_block_draw) inputs->touches[0].down[0] = true;
         break;
 
     case 2:
@@ -410,6 +474,15 @@ static void update_touches(inputs_t *inputs)
     }
 }
 
+// Convert a window position (SDL mouse events) into the logical units used by
+// goxel.  On Android window and framebuffer sizes are the same, but this also
+// works for a desktop SDL build with a scaled framebuffer.
+static void mouse_pos(int x, int y, float out[2])
+{
+    out[0] = x * g_win_to_fb[0] / g_ui_scale;
+    out[1] = y * g_win_to_fb[1] / g_ui_scale;
+}
+
 // -------------------------------------------------------------------------
 // Events.
 // -------------------------------------------------------------------------
@@ -447,15 +520,13 @@ static void on_event(const SDL_Event *event)
 
     case SDL_MOUSEMOTION:
         if (g_nb_fingers > 0) break;
-        g_inputs->touches[0].pos[0] = event->motion.x / g_ui_scale;
-        g_inputs->touches[0].pos[1] = event->motion.y / g_ui_scale;
+        mouse_pos(event->motion.x, event->motion.y, g_inputs->touches[0].pos);
         break;
 
     case SDL_MOUSEBUTTONDOWN:
     case SDL_MOUSEBUTTONUP:
         if (g_nb_fingers > 0) break;
-        g_inputs->touches[0].pos[0] = event->button.x / g_ui_scale;
-        g_inputs->touches[0].pos[1] = event->button.y / g_ui_scale;
+        mouse_pos(event->button.x, event->button.y, g_inputs->touches[0].pos);
         switch (event->button.button) {
         case SDL_BUTTON_LEFT:
             g_inputs->touches[0].down[0] = event->type == SDL_MOUSEBUTTONDOWN;
@@ -541,17 +612,24 @@ static int create_window(void)
     }
     SDL_GL_MakeCurrent(g_window, g_gl_context);
     SDL_GL_SetSwapInterval(1);
+    // So that touch events of the very first frame are already scaled right.
+    SDL_GL_GetDrawableSize(g_window, &g_fb_size[0], &g_fb_size[1]);
     return 0;
 }
 
 static void update_layout(inputs_t *inputs)
 {
+    int win_size[2] = {1, 1};
+
     SDL_GL_GetDrawableSize(g_window, &g_fb_size[0], &g_fb_size[1]);
     if (g_fb_size[0] <= 0 || g_fb_size[1] <= 0) {
         // Surface not ready (app in the background).
         g_fb_size[0] = 1;
         g_fb_size[1] = 1;
     }
+    SDL_GetWindowSize(g_window, &win_size[0], &win_size[1]);
+    g_win_to_fb[0] = win_size[0] > 0 ? (float)g_fb_size[0] / win_size[0] : 1.f;
+    g_win_to_fb[1] = win_size[1] > 0 ? (float)g_fb_size[1] / win_size[1] : 1.f;
     inputs->window_size[0] = (int)roundf(g_fb_size[0] / g_ui_scale);
     inputs->window_size[1] = (int)roundf(g_fb_size[1] / g_ui_scale);
     inputs->scale = g_ui_scale;
@@ -605,6 +683,7 @@ int main(int argc, char **argv)
 
     g_ui_scale = compute_ui_scale();
 
+    sys_callbacks.log = log_msg;
     sys_callbacks.set_window_title = set_window_title;
     sys_callbacks.get_clipboard_text = get_clipboard_text;
     sys_callbacks.set_clipboard_text = set_clipboard_text;

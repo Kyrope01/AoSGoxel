@@ -12,12 +12,19 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/.." && pwd)"
 dest="$root/third_party/SDL"
 
-if [ -f "$dest/CMakeLists.txt" ]; then
+if [ ! -f "$dest/CMakeLists.txt" ]; then
+    mkdir -p "$root/third_party"
+    echo "Cloning SDL2 ($SDL_TAG) into third_party/SDL ..."
+    git clone --depth 1 --branch "$SDL_TAG" https://github.com/libsdl-org/SDL "$dest"
+else
     echo "SDL2 already present in third_party/SDL"
-    exit 0
 fi
 
-mkdir -p "$root/third_party"
-echo "Cloning SDL2 ($SDL_TAG) into third_party/SDL ..."
-git clone --depth 1 --branch "$SDL_TAG" https://github.com/libsdl-org/SDL "$dest"
+# SDL ships a Gradle project (android-project/) with its own gradle-wrapper.jar.
+# gradle/actions/setup-gradle validates every wrapper jar it finds in the
+# workspace and fails on unknown ones, so drop them: we only need SDL's Java
+# glue (org.libsdl.app.SDLActivity), which is compiled from source by AGP.
+rm -rf "$dest/android-project/gradle"
+find "$dest" -name 'gradle-wrapper.jar' -delete 2>/dev/null || true
+
 echo "Done."

@@ -15,9 +15,10 @@ Gradle project that builds an installable APK.
 | Piece | File |
 | --- | --- |
 | Platform layer (window, main loop, touch, text input) | `src/main_sdl.c` |
+| SDL2 Java glue | taken from `third_party/SDL/android-project` at build time |
 | Native build | `CMakeLists.txt` (repo root), `GOXEL_SDL` define |
 | Android project | `android/app/build.gradle`, `AndroidManifest.xml`, `GoxelActivity.java` |
-| CI | `.github/android-workflow.yml` (copy to `.github/workflows/android.yml`) |
+| CI | `.github/workflows/android.yml` |
 
 The renderer is built with `GLES2=1`, so it uses the OpenGL ES 2.0 path that
 already exists in `src/utils/gl.c`, `src/render.c` and the GLSL shaders
@@ -33,7 +34,9 @@ Requirements: JDK 17, Android SDK (platform 34 + build-tools 34.0.0),
 NDK `27.0.12077973`, CMake `3.22.1` and Gradle 8.7.
 
 ```bash
-# 1. Get the SDL2 sources (not vendored in this repo, git-ignored)
+# 1. Get the SDL2 sources (not vendored in this repo, git-ignored).
+#    The script also drops SDL's own gradle wrapper: gradle/actions/setup-gradle
+#    fails the CI when it finds a wrapper jar it doesn't know.
 ./android/fetch-sdl.sh
 
 # 2. Build the APK
@@ -44,12 +47,11 @@ gradle assembleDebug        # or: gradle assembleRelease
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Or let GitHub Actions do it: the workflow is stored as
-`.github/android-workflow.yml`. **Enable it once** by creating
-`.github/workflows/android.yml` with the same content (GitHub web UI: *Add
-file → Create new file*, paste, commit). It then builds the APK on every push
-and uploads it as the `aosgoxel-apk` artifact, and attaches it to the release
-when a `v*` tag is pushed.
+Or let GitHub Actions do it: `.github/workflows/android.yml` builds the APK on
+every push, uploads it as the `aosgoxel-apk` artifact, and attaches it to the
+release when a `v*` tag is pushed. It pins NDK 27.0.12077973, CMake 3.22.1 and
+Gradle 8.7; keep `android/app/build.gradle` and the `env:` block of the
+workflow in sync if you bump them.
 
 The APK is built for `arm64-v8a` only. Add `armeabi-v7a` to `abiFilters` in
 `android/app/build.gradle` for older devices.
